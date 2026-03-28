@@ -466,6 +466,37 @@ check_dependencies() {
     fi
 }
 
+setup_busybox() {
+    if command -v busybox > /dev/null 2>&1; then
+        log Debug "BusyBox already available in PATH: $(command -v busybox)"
+        return 0
+    fi
+
+    log Debug "BusyBox not found in PATH, starting detection..."
+
+    local bb_paths="
+        /data/adb/ksu/bin/busybox
+        /data/adb/ap/bin/busybox
+        /data/adb/magisk/busybox
+    "
+
+    local found_bb=""
+    for bb in $bb_paths; do
+        if [ -f "$bb" ] && [ -x "$bb" ]; then
+            found_bb="$bb"
+            break
+        fi
+    done
+
+    if [ -n "$found_bb" ]; then
+        local bb_dir=$(dirname "$found_bb")
+        export PATH="$PATH:$bb_dir"
+        log Info "BusyBox detected and added to PATH: $found_bb"
+    else
+        log Warn "No BusyBox found in common root paths"
+    fi
+}
+
 check_kernel_feature() {
     if [ "$DRY_RUN" -eq 1 ]; then
         log Debug "Skip kernel feature check for $1"
@@ -653,35 +684,16 @@ safe_chain_create() {
     fi
 }
 
-detect_busybox() {
-    if [ -f "/data/adb/ksu/bin/busybox" ]; then
-        echo "/data/adb/ksu/bin/busybox"
-    elif [ -f "/data/adb/ap/bin/busybox" ]; then
-        echo "/data/adb/ap/bin/busybox"
-    elif [ -f "/data/adb/magisk/busybox" ]; then
-        echo "/data/adb/magisk/busybox"
-    else
-        echo "busybox"
-    fi
-}
-
 download_file() {
     local url="$1"
     local output="$2"
+
     if command -v curl > /dev/null 2>&1; then
         log Debug "[EXEC] curl -fsSL --connect-timeout 10 --retry 3 $url -o $output"
-        if [ "$DRY_RUN" -eq 0 ]; then
-            curl -fsSL --connect-timeout 10 --retry 3 "$url" -o "$output" || return 1
-        fi
+        [ "$DRY_RUN" -eq 0 ] && curl -fsSL --connect-timeout 10 --retry 3 "$url" -o "$output" || return 1
     else
-        local wget_cmd="wget"
-        if ! command -v wget > /dev/null 2>&1; then
-            wget_cmd="$(detect_busybox) wget"
-        fi
-        log Debug "[EXEC] $wget_cmd -q -T 10 -t 3 -O $output $url"
-        if [ "$DRY_RUN" -eq 0 ]; then
-            $wget_cmd -q -T 10 -t 3 -O "$output" "$url" || return 1
-        fi
+        log Debug "[EXEC] busybox wget -q -T 10 -t 3 -O $output $url"
+        [ "$DRY_RUN" -eq 0 ] && busybox wget -q -T 10 -t 3 -O "$output" "$url" || return 1
     fi
 }
 
@@ -1900,6 +1912,7 @@ main() {
 
     check_root
     check_dependencies
+    setup_busybox
 
     init_tmpdir
     init_kernel_config_cache
