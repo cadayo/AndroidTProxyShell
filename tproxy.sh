@@ -2,7 +2,7 @@
 
 readonly SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
 # Version (use YY.MM.DD format)
-readonly SCRIPT_VERSION="v26.04.16"
+readonly SCRIPT_VERSION="v26.04.07"
 
 export TZ=Asia/Shanghai
 
@@ -12,18 +12,18 @@ export TZ=Asia/Shanghai
 # Proxy running user and group
 readonly DEFAULT_CORE_USER_GROUP="root:net_admin"
 # Proxy traffic mark
-readonly DEFAULT_ROUTING_MARK=""
+readonly DEFAULT_ROUTING_MARK="0x1234"
 readonly DEFAULT_FORCE_MARK_BYPASS=0
 # Proxy ports (transparent proxy listening ports)
 readonly DEFAULT_PROXY_TCP_PORT="1536"
 readonly DEFAULT_PROXY_UDP_PORT="1536"
 
 # Proxy mode: 0=auto (check TPROXY support), 1=force TPROXY, 2=force REDIRECT
-readonly DEFAULT_PROXY_MODE=0
+readonly DEFAULT_PROXY_MODE=1
 
 # Performance mode (0=normal, 1=performance optimized)
 # When enabled, may enable some features (e.g. conntrack) for better speed
-readonly DEFAULT_PERFORMANCE_MODE=0
+readonly DEFAULT_PERFORMANCE_MODE=1
 
 # DNS configuration
 # DNS hijack method (0: disabled, 1: tproxy, 2: redirect)
@@ -37,7 +37,7 @@ readonly DEFAULT_MOBILE_INTERFACE="rmnet_data+"
 # WiFi interface
 readonly DEFAULT_WIFI_INTERFACE="wlan0"
 # Hotspot interface
-readonly DEFAULT_HOTSPOT_INTERFACE="wlan2"
+readonly DEFAULT_HOTSPOT_INTERFACE="wlan1"
 # USB tethering interface
 readonly DEFAULT_USB_INTERFACE="rndis+"
 
@@ -48,20 +48,20 @@ readonly DEFAULT_OTHER_PROXY_INTERFACES=""
 # Proxy switches
 readonly DEFAULT_PROXY_MOBILE=1
 readonly DEFAULT_PROXY_WIFI=1
-readonly DEFAULT_PROXY_HOTSPOT=0
-readonly DEFAULT_PROXY_USB=0
+readonly DEFAULT_PROXY_HOTSPOT=1
+readonly DEFAULT_PROXY_USB=1
 readonly DEFAULT_PROXY_TCP=1
 readonly DEFAULT_PROXY_UDP=1
 
 # IPv6 proxy control:
-#  0 = disable proxy (but IPv6 stack remains active)
-#  1 = enable proxy (normal IPv6 proxy)
-# -1 = force disable IPv6 stack entirely (disable_ipv6=1 on all interfaces)
-readonly DEFAULT_PROXY_IPV6=0
+#  0 = disable proxy (不代理v6，拒绝v6流量且回退v4)
+#  1 = enable proxy (正常代理v6)
+# -1 = force disable IPv6 stack entirely (完全禁止v6)
+readonly DEFAULT_PROXY_IPV6=-1
 
 # The use of 100.0.0.0/8 instead of 100.64.0.0/10 is purely due to a mistake by China Telecom's service provider, and you can change it back
-readonly DEFAULT_BYPASS_IPv4_LIST="0.0.0.0/8 10.0.0.0/8 100.0.0.0/8 127.0.0.0/8 169.254.0.0/16 172.16.0.0/12 192.0.0.0/24 192.0.2.0/24 192.88.99.0/24 192.168.0.0/16 198.51.100.0/24 203.0.113.0/24 224.0.0.0/4 240.0.0.0/4 255.255.255.255/32"
-readonly DEFAULT_BYPASS_IPv6_LIST="::/128 ::1/128 ::ffff:0:0/96 100::/64 64:ff9b::/96 2001::/32 2001:10::/28 2001:20::/28 2001:db8::/32 2002::/16 fe80::/10 ff00::/8"
+readonly DEFAULT_BYPASS_IPv4_LIST="127.0.0.0/8 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 100.64.0.0/10 169.254.0.0/16 224.0.0.0/4 0.0.0.0/8 240.0.0.0/4 255.255.255.255/32"
+readonly DEFAULT_BYPASS_IPv6_LIST="::/128 ::1/128 ::ffff:0:0/96 100::/64 64:ff9b::/96 2001::/32 2002::/16 fe80::/10 ff00::/8"
 readonly DEFAULT_PROXY_IPv4_LIST=""
 readonly DEFAULT_PROXY_IPv6_LIST=""
 
@@ -71,8 +71,8 @@ readonly DEFAULT_HOTSPOT_SUBNET_IPV4="192.168.43.0/24"
 readonly DEFAULT_HOTSPOT_SUBNET_IPV6="fe80::/10"
 
 # Mark values
-readonly DEFAULT_MARK_VALUE=20
-readonly DEFAULT_MARK_VALUE6=25
+readonly DEFAULT_MARK_VALUE=1048576
+readonly DEFAULT_MARK_VALUE6=1048577
 
 # Routing table ID
 readonly DEFAULT_TABLE_ID=2025
@@ -107,10 +107,6 @@ readonly DEFAULT_MAC_PROXY_MODE="blacklist"
 
 # block quic
 readonly DEFAULT_BLOCK_QUIC=0
-
-# Whether to include timestamp in logs (0=disable, 1=enable)
-# Disabling this can improve performance by avoiding a process fork for each log entry.
-readonly DEFAULT_LOG_TIMESTAMP=1
 
 # Dry-run mode (disabled by default)
 readonly DEFAULT_DRY_RUN=0
@@ -149,15 +145,13 @@ log() {
 
     [ "$should_print" -eq 0 ] && return 0
 
-    local timestamp=""
-    if [ "$LOG_TIMESTAMP" -eq 1 ]; then
-        timestamp="$(date +"%Y-%m-%d %H:%M:%S") "
-    fi
+    local timestamp
+    timestamp="$(date +"%Y-%m-%d %H:%M:%S")"
 
     if [ -t 2 ]; then
-        printf "%b\n" "${color_code}${timestamp}[${level}]: ${message}\033[0m" >&2
+        printf "%b\n" "${color_code}${timestamp} [${level}]: ${message}\033[0m" >&2
     else
-        printf "%s\n" "${timestamp}[${level}]: ${message}" >&2
+        printf "%s\n" "${timestamp} [${level}]: ${message}" >&2
     fi
 }
 
@@ -222,24 +216,23 @@ load_config() {
     BYPASS_MACS_LIST="${BYPASS_MACS_LIST:-$DEFAULT_BYPASS_MACS_LIST}"
     MAC_PROXY_MODE="${MAC_PROXY_MODE:-$DEFAULT_MAC_PROXY_MODE}"
     BLOCK_QUIC="${BLOCK_QUIC:-$DEFAULT_BLOCK_QUIC}"
-    LOG_TIMESTAMP="${LOG_TIMESTAMP:-$DEFAULT_LOG_TIMESTAMP}"
     SKIP_CHECK_FEATURE="${SKIP_CHECK_FEATURE:-0}"
 
     if [ "$VERBOSE" -eq 1 ]; then
         for _var in DRY_RUN CORE_USER_GROUP ROUTING_MARK FORCE_MARK_BYPASS \
-            PROXY_TCP_PORT PROXY_UDP_PORT PROXY_MODE PERFORMANCE_MODE \
-            DNS_HIJACK_ENABLE DNS_PORT \
-            MOBILE_INTERFACE WIFI_INTERFACE HOTSPOT_INTERFACE USB_INTERFACE \
-            OTHER_BYPASS_INTERFACES OTHER_PROXY_INTERFACES \
-            PROXY_MOBILE PROXY_WIFI PROXY_HOTSPOT PROXY_USB \
-            PROXY_TCP PROXY_UDP PROXY_IPV6 \
-            MARK_VALUE MARK_VALUE6 TABLE_ID \
-            PROXY_IPv4_LIST PROXY_IPv6_LIST BYPASS_IPv4_LIST BYPASS_IPv6_LIST \
-            HOTSPOT_SUBNET_IPV4 HOTSPOT_SUBNET_IPV6 \
-            APP_PROXY_ENABLE PROXY_APPS_LIST BYPASS_APPS_LIST APP_PROXY_MODE \
-            BYPASS_CN_IP CN_IP_FILE CN_IPV6_FILE CN_IP_URL CN_IPV6_URL \
-            MAC_FILTER_ENABLE PROXY_MACS_LIST BYPASS_MACS_LIST MAC_PROXY_MODE \
-            BLOCK_QUIC LOG_TIMESTAMP SKIP_CHECK_FEATURE; do
+                    PROXY_TCP_PORT PROXY_UDP_PORT PROXY_MODE PERFORMANCE_MODE \
+                    DNS_HIJACK_ENABLE DNS_PORT \
+                    MOBILE_INTERFACE WIFI_INTERFACE HOTSPOT_INTERFACE USB_INTERFACE \
+                    OTHER_BYPASS_INTERFACES OTHER_PROXY_INTERFACES \
+                    PROXY_MOBILE PROXY_WIFI PROXY_HOTSPOT PROXY_USB \
+                    PROXY_TCP PROXY_UDP PROXY_IPV6 \
+                    MARK_VALUE MARK_VALUE6 TABLE_ID \
+                    PROXY_IPv4_LIST PROXY_IPv6_LIST BYPASS_IPv4_LIST BYPASS_IPv6_LIST \
+                    HOTSPOT_SUBNET_IPV4 HOTSPOT_SUBNET_IPV6 \
+                    APP_PROXY_ENABLE PROXY_APPS_LIST BYPASS_APPS_LIST APP_PROXY_MODE \
+                    BYPASS_CN_IP CN_IP_FILE CN_IPV6_FILE CN_IP_URL CN_IPV6_URL \
+                    MAC_FILTER_ENABLE PROXY_MACS_LIST BYPASS_MACS_LIST MAC_PROXY_MODE \
+                    BLOCK_QUIC SKIP_CHECK_FEATURE; do
             eval "log Debug \"$_var: \$$_var\""
         done
     fi
@@ -332,7 +325,7 @@ init_kernel_config_cache() {
 # Helper: validate a value is a positive integer (zero forks)
 is_positive_integer() {
     case "$1" in
-        '' | *[!0-9]*) return 1 ;;
+        ''|*[!0-9]*) return 1 ;;
     esac
     return 0
 }
@@ -351,19 +344,13 @@ validate_config() {
     fi
 
     case "$PROXY_MODE" in
-        0 | 1 | 2) ;;
-        *)
-            log Error "Invalid PROXY_MODE: $PROXY_MODE (must be 0=auto, 1=force TPROXY, 2=force REDIRECT)"
-            return 1
-            ;;
+        0|1|2) ;;
+        *) log Error "Invalid PROXY_MODE: $PROXY_MODE (must be 0=auto, 1=force TPROXY, 2=force REDIRECT)"; return 1 ;;
     esac
 
     case "$DNS_HIJACK_ENABLE" in
-        0 | 1 | 2) ;;
-        *)
-            log Error "Invalid DNS_HIJACK_ENABLE: $DNS_HIJACK_ENABLE (must be 0=disabled, 1=tproxy, 2=redirect)"
-            return 1
-            ;;
+        0|1|2) ;;
+        *) log Error "Invalid DNS_HIJACK_ENABLE: $DNS_HIJACK_ENABLE (must be 0=disabled, 1=tproxy, 2=redirect)"; return 1 ;;
     esac
 
     if ! is_positive_integer "$DNS_PORT" || [ "$DNS_PORT" -lt 1 ] || [ "$DNS_PORT" -gt 65535 ]; then
@@ -488,65 +475,31 @@ setup_busybox() {
 }
 
 check_kernel_feature() {
+    if [ "$DRY_RUN" -eq 1 ]; then
+        log Debug "Skip kernel feature check for $1"
+        return 0
+    fi
+
+    if [ "$SKIP_CHECK_FEATURE" = "1" ]; then
+        log Warn "Kernel feature check skipped"
+        return 0
+    fi
+
     local feature="$1"
     local config_name="CONFIG_${feature}"
 
-    # Check compile-time config (/proc/config.gz)
     if [ -f "$TMPDIR/kernel_config.cache" ]; then
         if grep -qE "^${config_name}=[ym]$" "$TMPDIR/kernel_config.cache" 2> /dev/null; then
-            log Debug "Kernel feature $feature is enabled (config)"
+            log Debug "Kernel feature $feature is enabled"
             return 0
+        else
+            log Warn "Kernel feature $feature is disabled or not found"
+            return 1
         fi
+    else
+        log Warn "Kernel config cache not available, cannot check $feature"
+        return 1
     fi
-
-    # check runtime loaded modules (/sys/module/)
-    local module_name=""
-    case "$feature" in
-        IP_SET)                       module_name="ip_set" ;;
-        NETFILTER_XT_SET)             module_name="xt_set" ;;
-        NETFILTER_XT_MATCH_ADDRTYPE)  module_name="xt_addrtype" ;;
-        NETFILTER_XT_TARGET_TPROXY)   module_name="xt_TPROXY" ;;
-    esac
-    if [ -n "$module_name" ] && [ -d "/sys/module/$module_name" ]; then
-        log Debug "Kernel feature $feature is enabled (loaded module)"
-        return 0
-    fi
-
-    log Warn "Kernel feature $feature is disabled or not found"
-    return 1
-}
-
-init_feature_flags() {
-    if [ "$SKIP_CHECK_FEATURE" = "1" ] || [ "$DRY_RUN" -eq 1 ]; then
-        log Warn "Kernel feature check skipped"
-        HAS_TPROXY=1
-        HAS_CONNTRACK=1
-        HAS_OWNER=1
-        HAS_MARK_MT=1
-        HAS_MARK_TG=1
-        HAS_SOCKET=1
-        HAS_ADDRTYPE=1
-        HAS_MAC=1
-        HAS_IPSET=1
-        HAS_XT_SET=1
-        HAS_NAT6=1
-        HAS_REDIRECT6=1
-        return 0
-    fi
-
-    log Info "Detecting kernel features..."
-    check_kernel_feature "NETFILTER_XT_TARGET_TPROXY" && HAS_TPROXY=1
-    check_kernel_feature "NETFILTER_XT_MATCH_CONNTRACK" && HAS_CONNTRACK=1
-    check_kernel_feature "NETFILTER_XT_MATCH_OWNER" && HAS_OWNER=1
-    check_kernel_feature "NETFILTER_XT_MATCH_MARK" && HAS_MARK_MT=1
-    check_kernel_feature "NETFILTER_XT_TARGET_MARK" && HAS_MARK_TG=1
-    check_kernel_feature "NETFILTER_XT_MATCH_SOCKET" && HAS_SOCKET=1
-    check_kernel_feature "NETFILTER_XT_MATCH_ADDRTYPE" && HAS_ADDRTYPE=1
-    check_kernel_feature "NETFILTER_XT_MATCH_MAC" && HAS_MAC=1
-    check_kernel_feature "IP_SET" && HAS_IPSET=1
-    check_kernel_feature "NETFILTER_XT_SET" && HAS_XT_SET=1
-    check_kernel_feature "IP6_NF_NAT" && HAS_NAT6=1
-    check_kernel_feature "IP6_NF_TARGET_REDIRECT" && HAS_REDIRECT6=1
 }
 
 check_tproxy_support() {
@@ -555,7 +508,7 @@ check_tproxy_support() {
         return 0
     fi
 
-    if [ "$HAS_TPROXY" -eq 1 ]; then
+    if check_kernel_feature "NETFILTER_XT_TARGET_TPROXY"; then
         log Info "Kernel TPROXY support confirmed"
         return 0
     else
@@ -568,12 +521,15 @@ check_tproxy_support() {
 run_ipt_command() {
     local cmd="$1"
     shift
+    local args="$*"
 
-    log Debug "[EXEC] $cmd -w 100 $*"
+    log Debug "[EXEC] $cmd -w 100 $args"
 
-    [ "$DRY_RUN" -eq 1 ] && return 0
+    if [ "$DRY_RUN" -eq 1 ]; then
+        return 0
+    fi
 
-    command "$cmd" -w 100 "$@"
+    command "$cmd" -w 100 $args
 }
 
 iptables() {
@@ -608,57 +564,66 @@ ip6_route() {
     command ip -6 route "$@"
 }
 
-find_packages_uid() {
-    [ $# -eq 0 ] && return 0
+get_package_uid() {
+    local pkg="$1"
+    if [ ! -r /data/system/packages.list ]; then
+        log Error "Cannot read /data/system/packages.list"
+        return 1
+    fi
 
-    awk -v tokens="$*" '
-    BEGIN {
-        n = split(tokens, t_arr, " ")
-        for (i = 1; i <= n; i++) {
-            t = t_arr[i]
-            if (t ~ /:/) {
-                split(t, parts, ":")
-                pfx = parts[1]; pkg = parts[2]
-            } else {
-                pfx = 0; pkg = t
-            }
-            # Record that we want this package and store its prefix(es)
-            wanted[pkg] = 1
-            # Multiple prefixes might exist for the same package
-            pfxs[pkg] = (pkg in pfxs) ? pfxs[pkg] " " pfx : pfx
-        }
-    }
-    ($1 in wanted) {
-        base_uid = ""
-        if ($2 ~ /^[0-9]+$/) base_uid = $2
-        else if ($(NF-1) ~ /^[0-9]+$/) base_uid = $(NF-1)
-        
-        if (base_uid != "") {
-            m = split(pfxs[$1], p_arr, " ")
-            for (j = 1; j <= m; j++) {
-                # Store result keyed by package and prefix to preserve order later
-                res[$1, p_arr[j]] = (p_arr[j] * 100000 + base_uid)
-            }
-        }
-    }
-    END {
-        final_out = ""
-        for (i = 1; i <= n; i++) {
-            t = t_arr[i]
-            if (t ~ /:/) {
-                split(t, parts, ":")
-                pfx = parts[1]; pkg = parts[2]
-            } else {
-                pfx = 0; pkg = t
-            }
-            
-            if ((pkg, pfx) in res) {
-                final_out = (final_out == "") ? res[pkg, pfx] : final_out " " res[pkg, pfx]
-            }
-        }
-        print final_out
-    }
-    ' /data/system/packages.list
+    local uid
+    uid=$(awk -v pkg="$pkg" '$1 == pkg { if ($2 ~ /^[0-9]+$/) print $2; else if ($(NF-1) ~ /^[0-9]+$/) print $(NF-1); exit }' /data/system/packages.list)
+
+    if [ -z "$uid" ]; then
+        log Error "Package not found or invalid UID format: $pkg"
+        return 1
+    fi
+
+    echo "$uid"
+}
+
+find_packages_uid() {
+    local out=""
+    local token
+    local uid_base
+    local final_uid
+    for token in "$@"; do
+        local user_prefix=0
+        local package="$token"
+        case "$token" in
+            *:*)
+                user_prefix="${token%%:*}"
+                package="${token#*:}"
+                case "$user_prefix" in
+                    '' | *[!0-9]*)
+                        log Warn "Invalid user prefix in token: $token, using 0"
+                        user_prefix=0
+                        ;;
+                esac
+                ;;
+        esac
+        if uid_base=$(get_package_uid "$package" 2> /dev/null); then
+            final_uid=$((user_prefix * 100000 + uid_base))
+            out="${out:+$out }$final_uid"
+            log Info "Resolved package $token to UID $final_uid"
+        else
+            log Warn "Failed to resolve UID for package: $package"
+        fi
+    done
+    echo "$out"
+}
+
+safe_chain_exists() {
+    local family="$1"
+    local table="$2"
+    local chain="$3"
+    local cmd="iptables"
+
+    if [ "$family" = "6" ]; then
+        cmd="ip6tables"
+    fi
+
+    $cmd -t "$table" -L "$chain" > /dev/null 2>&1
 }
 
 safe_chain_create() {
@@ -667,9 +632,13 @@ safe_chain_create() {
     local chain="$3"
     local cmd="iptables"
 
-    [ "$family" = "6" ] && cmd="ip6tables"
+    if [ "$family" = "6" ]; then
+        cmd="ip6tables"
+    fi
 
-    $cmd -t "$table" -N "$chain" 2> /dev/null || true
+    if [ "$DRY_RUN" -eq 1 ] || ! safe_chain_exists "$family" "$table" "$chain"; then
+        $cmd -t "$table" -N "$chain"
+    fi
     $cmd -t "$table" -F "$chain"
 }
 
@@ -917,30 +886,30 @@ setup_proxy_chain() {
         safe_chain_create "$family" "$table" "$c"
     done
 
-    if [ "$PERFORMANCE_MODE" -eq 1 ] && [ "$HAS_MARK_TG" -eq 1 ] && [ "$HAS_SOCKET" -eq 1 ]; then
+    if [ "$PERFORMANCE_MODE" -eq 1 ] && check_kernel_feature "NETFILTER_XT_TARGET_MARK" && check_kernel_feature "NETFILTER_XT_MATCH_SOCKET"; then
         $cmd -t "$table" -A DIVERT$suffix -j MARK --set-mark "$mark"
         $cmd -t "$table" -A DIVERT$suffix -j ACCEPT
 
         $cmd -t "$table" -A "PROXY_PREROUTING$suffix" -p tcp -m socket --transparent -j DIVERT$suffix
     fi
 
-    if [ "$HAS_CONNTRACK" -eq 1 ]; then
+    if check_kernel_feature "NETFILTER_XT_MATCH_CONNTRACK"; then
         $cmd -t "$table" -A "PROXY_PREROUTING$suffix" -m conntrack --ctdir REPLY -j ACCEPT
         $cmd -t "$table" -A "PROXY_OUTPUT$suffix" -m conntrack --ctdir REPLY -j ACCEPT
         log Info "Added reply connection direction bypass"
     fi
 
     local bypass_success=0
-    if [ "$FORCE_MARK_BYPASS" -eq 1 ] && [ "$HAS_MARK_MT" -eq 1 ] && [ -n "$ROUTING_MARK" ]; then
+    if [ "$FORCE_MARK_BYPASS" -eq 1 ] && check_kernel_feature "NETFILTER_XT_MATCH_MARK" && [ -n "$ROUTING_MARK" ]; then
         $cmd -t "$table" -A "PROXY_PREROUTING$suffix" -m mark --mark "$ROUTING_MARK" -j ACCEPT
         $cmd -t "$table" -A "PROXY_OUTPUT$suffix" -m mark --mark "$ROUTING_MARK" -j ACCEPT
         log Info "Added bypass for marked traffic with core mark $ROUTING_MARK (forced)"
         bypass_success=1
-    elif [ "$HAS_OWNER" -eq 1 ]; then
+    elif check_kernel_feature "NETFILTER_XT_MATCH_OWNER"; then
         $cmd -t "$table" -A "PROXY_OUTPUT$suffix" -m owner --uid-owner "$CORE_USER" --gid-owner "$CORE_GROUP" -j ACCEPT
         log Info "Added bypass for core user $CORE_USER:$CORE_GROUP"
         bypass_success=1
-    elif [ "$HAS_MARK_MT" -eq 1 ] && [ -n "$ROUTING_MARK" ]; then
+    elif check_kernel_feature "NETFILTER_XT_MATCH_MARK" && [ -n "$ROUTING_MARK" ]; then
         $cmd -t "$table" -A "PROXY_OUTPUT$suffix" -m mark --mark "$ROUTING_MARK" -j ACCEPT
         log Info "Added bypass for marked traffic with core mark $ROUTING_MARK"
         bypass_success=1
@@ -951,7 +920,7 @@ setup_proxy_chain() {
 
     # Pre-check performance mode with conntrack
     local _perf_ct=0
-    if [ "$PERFORMANCE_MODE" -eq 1 ] && [ "$HAS_CONNTRACK" -eq 1 ]; then
+    if [ "$PERFORMANCE_MODE" -eq 1 ] && check_kernel_feature "NETFILTER_XT_MATCH_CONNTRACK"; then
         _perf_ct=1
     fi
 
@@ -979,10 +948,31 @@ setup_proxy_chain() {
         fi
     fi
 
-    if [ "$HAS_ADDRTYPE" -eq 1 ]; then
+    if check_kernel_feature "NETFILTER_XT_MATCH_ADDRTYPE"; then
         $cmd -t "$table" -A "BYPASS_IP$suffix" -m addrtype --dst-type LOCAL -p udp ! --dport 53 -j ACCEPT
         $cmd -t "$table" -A "BYPASS_IP$suffix" -m addrtype --dst-type LOCAL ! -p udp -j ACCEPT
         log Info "Added local address type bypass"
+    else
+    # 原代码不删作为分支，在此处添加不依赖内核模块的平替代码
+        log Warn "Kernel ADDRTYPE not supported, using manual IP ranges fallback."
+    
+    # 1. 如果是 IPv4，对你指定的这些网段（非 53 端口流量）予以放行
+        if [ "$family" = "4" ] || [ -z "$family" ]; then
+          for ip_range in 127.0.0.0/8 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 100.64.0.0/10 169.254.0.0/16 224.0.0.0/4 0.0.0.0/8 240.0.0.0/4 255.255.255.255/32; do
+              $cmd -t "$table" -A "BYPASS_IP$suffix" -d "$ip_range" -p udp ! --dport 53 -j ACCEPT
+              $cmd -t "$table" -A "BYPASS_IP$suffix" -d "$ip_range" ! -p udp -j ACCEPT
+          done
+        fi
+
+    # 2. 如果是 IPv6，对你指定的这些网段（非 53 端口流量）予以放行
+        if [ "$family" = "6" ]; then
+          for ip_v6 in ::/128 ::1/128 ::ffff:0:0/96 100::/64 64:ff9b::/96 2001::/32 2002::/16 fe80::/10 ff00::/8; do
+              $cmd -t "$table" -A "BYPASS_IP$suffix" -d "$ip_v6" -p udp ! --dport 53 -j ACCEPT
+              $cmd -t "$table" -A "BYPASS_IP$suffix" -d "$ip_v6" ! -p udp -j ACCEPT
+          done
+        fi
+    
+        log Info "Added specified manual IP ranges bypass as fallback"
     fi
 
     if [ "$family" = "6" ]; then
@@ -1097,7 +1087,7 @@ setup_proxy_chain() {
 
     local mac
     if [ "$MAC_FILTER_ENABLE" -eq 1 ] && [ "$PROXY_HOTSPOT" -eq 1 ] && [ -n "$HOTSPOT_INTERFACE" ]; then
-        if [ "$HAS_MAC" -eq 1 ]; then
+        if check_kernel_feature "NETFILTER_XT_MATCH_MAC"; then
             log Info "Setting up MAC address filter rules for interface $HOTSPOT_INTERFACE"
             case "$MAC_PROXY_MODE" in
                 blacklist)
@@ -1135,7 +1125,7 @@ setup_proxy_chain() {
     local uids
     local uid
     if [ "$APP_PROXY_ENABLE" -eq 1 ]; then
-        if [ "$HAS_OWNER" -eq 1 ]; then
+        if check_kernel_feature "NETFILTER_XT_MATCH_OWNER"; then
             log Info "Setting up application filter rules in $APP_PROXY_MODE mode"
             case "$APP_PROXY_MODE" in
                 blacklist)
@@ -1229,7 +1219,25 @@ setup_proxy_chain() {
         $cmd -t "$table" -I OUTPUT -p tcp -j "PROXY_OUTPUT$suffix"
         log Info "Added TCP rules to PREROUTING and OUTPUT chains"
     fi
+    # --- DNS 劫持与防泄漏优化 ---
+    if [ "$DNS_HIJACK_ENABLE" -ne 0 ]; then
+        # 针对本机 OUTPUT 和外部 PREROUTING 劫持 53 端口 (UDP+TCP)
+        $cmd -t "$table" -A "DNS_HIJACK_PRE$suffix" -p udp --dport 53 -j TPROXY --on-port "$DNS_PORT" --tproxy-mark "$ROUTING_MARK"
+        $cmd -t "$table" -A "DNS_HIJACK_PRE$suffix" -p tcp --dport 53 -j TPROXY --on-port "$DNS_PORT" --tproxy-mark "$ROUTING_MARK"
+        # 防泄漏规则：非代理核心用户禁止直连 53 端口
+        if [ "$family" = "4" ]; then
+            iptables -t filter -I OUTPUT 1 -p udp --dport 53 -m owner ! --uid-owner "$CORE_USER" -j REJECT 2>/dev/null
+        fi
+        log Info "Applying DNS Hijack & Leak Protection for IPv${family}..."
+    fi
 
+    # --- IPv6 快速回退 (仅针对 IPv6 链) ---
+    if [ "$family" = "4" ] && [ "$PROXY_IPV6" -eq 0 ]; then
+        # 拒绝所有 IPv6 流量并返回 unreachable，强制 App 切换 IPv4
+        ip6tables -t filter -I OUTPUT 1 -m owner ! --uid-owner "$CORE_USER" -j REJECT --reject-with icmp6-port-unreachable 2>/dev/null
+        ip6tables -t filter -I FORWARD 1 -j REJECT --reject-with icmp6-port-unreachable 2>/dev/null
+        log Info "Configuring IPv6 Fast-Fallback (Unreachable signal)..."
+    fi
     log Info "$mode_name chains for IPv${family} setup completed"
 }
 
@@ -1266,7 +1274,7 @@ setup_dns_hijack() {
         redirect2)
             # Handle DNS using REDIRECT method
             if [ "$family" = "6" ] && {
-                [ "$HAS_NAT6" -eq 0 ] || [ "$HAS_REDIRECT6" -eq 0 ]
+                ! check_kernel_feature "IP6_NF_NAT" || ! check_kernel_feature "IP6_NF_TARGET_REDIRECT"
             }; then
                 log Warn "IPv6: Kernel does not support IPv6 NAT or REDIRECT, IPv6 DNS hijack skipped"
                 return 0
@@ -1275,7 +1283,7 @@ setup_dns_hijack() {
             $cmd -t nat -A "NAT_DNS_HIJACK$suffix" -p tcp --dport 53 -j REDIRECT --to-ports "$DNS_PORT"
             $cmd -t nat -A "NAT_DNS_HIJACK$suffix" -p udp --dport 53 -j REDIRECT --to-ports "$DNS_PORT"
 
-            [ "$PROXY_MOBILE" -eq 1 ] && $cmd -t nat -A PREROUTING -i "$MOBILE_INTERFACE" -j "NAT_DNS_HIJACK$suffix"
+            [ "$PROXY_MOBILE" -eq 1 ] && $cmd -t nat 4-A PREROUTING -i "$MOBILE_INTERFACE" -j "NAT_DNS_HIJACK$suffix"
             [ "$PROXY_WIFI" -eq 1 ] && $cmd -t nat -A PREROUTING -i "$WIFI_INTERFACE" -j "NAT_DNS_HIJACK$suffix"
             [ "$PROXY_USB" -eq 1 ] && $cmd -t nat -A PREROUTING -i "$USB_INTERFACE" -j "NAT_DNS_HIJACK$suffix"
             local interface
@@ -1308,7 +1316,7 @@ setup_tproxy_chain6() {
 }
 
 setup_redirect_chain6() {
-    if [ "$HAS_NAT6" -eq 0 ] || [ "$HAS_REDIRECT6" -eq 0 ]; then
+    if ! check_kernel_feature "IP6_NF_NAT" || ! check_kernel_feature "IP6_NF_TARGET_REDIRECT"; then
         log Warn "IPv6: Kernel does not support IPv6 NAT or REDIRECT, IPv6 proxy setup skipped"
         return 0
     fi
@@ -1379,12 +1387,12 @@ cleanup_chain() {
 
     # Remove from main chains (symmetric with setup)
     if [ "$PROXY_TCP" -eq 1 ]; then
-        $cmd -t "$table" -D PREROUTING -p tcp -j "PROXY_PREROUTING$suffix" 2> /dev/null || true
-        $cmd -t "$table" -D OUTPUT -p tcp -j "PROXY_OUTPUT$suffix" 2> /dev/null || true
+        $cmd -t "$table" -D PREROUTING -p tcp -j "PROXY_PREROUTING$suffix" 2>/dev/null || true
+        $cmd -t "$table" -D OUTPUT -p tcp -j "PROXY_OUTPUT$suffix" 2>/dev/null || true
     fi
     if [ "$PROXY_UDP" -eq 1 ] || [ "$mode" = "redirect" ]; then
-        $cmd -t "$table" -D PREROUTING -p udp -j "PROXY_PREROUTING$suffix" 2> /dev/null || true
-        $cmd -t "$table" -D OUTPUT -p udp -j "PROXY_OUTPUT$suffix" 2> /dev/null || true
+        $cmd -t "$table" -D PREROUTING -p udp -j "PROXY_PREROUTING$suffix" 2>/dev/null || true
+        $cmd -t "$table" -D OUTPUT -p udp -j "PROXY_OUTPUT$suffix" 2>/dev/null || true
     fi
 
     # Define chains based on family
@@ -1392,26 +1400,26 @@ cleanup_chain() {
 
     # Clean up chains
     for c in $chains; do
-        $cmd -t "$table" -F "$c" 2> /dev/null || true
-        $cmd -t "$table" -X "$c" 2> /dev/null || true
+        $cmd -t "$table" -F "$c" 2>/dev/null || true
+        $cmd -t "$table" -X "$c" 2>/dev/null || true
     done
 
     # Remove DNS rules if applicable
     if [ "$mode" = "tproxy" ] && [ "$DNS_HIJACK_ENABLE" -eq 2 ]; then
-        $cmd -t nat -D PREROUTING -i "$MOBILE_INTERFACE" -j "NAT_DNS_HIJACK$suffix" 2> /dev/null || true
-        $cmd -t nat -D PREROUTING -i "$WIFI_INTERFACE" -j "NAT_DNS_HIJACK$suffix" 2> /dev/null || true
-        $cmd -t nat -D PREROUTING -i "$USB_INTERFACE" -j "NAT_DNS_HIJACK$suffix" 2> /dev/null || true
+        $cmd -t nat -D PREROUTING -i "$MOBILE_INTERFACE" -j "NAT_DNS_HIJACK$suffix" 2>/dev/null || true
+        $cmd -t nat -D PREROUTING -i "$WIFI_INTERFACE" -j "NAT_DNS_HIJACK$suffix" 2>/dev/null || true
+        $cmd -t nat -D PREROUTING -i "$USB_INTERFACE" -j "NAT_DNS_HIJACK$suffix" 2>/dev/null || true
         local interface
         if [ -n "$OTHER_PROXY_INTERFACES" ]; then
             for interface in $OTHER_PROXY_INTERFACES; do
-                $cmd -t nat -D PREROUTING -i "$interface" -j "NAT_DNS_HIJACK$suffix" 2> /dev/null || true
+                $cmd -t nat -D PREROUTING -i "$interface" -j "NAT_DNS_HIJACK$suffix" 2>/dev/null || true
             done
         fi
-        $cmd -t nat -D OUTPUT -p udp --dport 53 -m owner --uid-owner "$CORE_USER" --gid-owner "$CORE_GROUP" -j ACCEPT 2> /dev/null || true
-        $cmd -t nat -D OUTPUT -p tcp --dport 53 -m owner --uid-owner "$CORE_USER" --gid-owner "$CORE_GROUP" -j ACCEPT 2> /dev/null || true
-        $cmd -t nat -D OUTPUT -j "NAT_DNS_HIJACK$suffix" 2> /dev/null || true
-        $cmd -t nat -F "NAT_DNS_HIJACK$suffix" 2> /dev/null || true
-        $cmd -t nat -X "NAT_DNS_HIJACK$suffix" 2> /dev/null || true
+        $cmd -t nat -D OUTPUT -p udp --dport 53 -m owner --uid-owner "$CORE_USER" --gid-owner "$CORE_GROUP" -j ACCEPT 2>/dev/null || true
+        $cmd -t nat -D OUTPUT -p tcp --dport 53 -m owner --uid-owner "$CORE_USER" --gid-owner "$CORE_GROUP" -j ACCEPT 2>/dev/null || true
+        $cmd -t nat -D OUTPUT -j "NAT_DNS_HIJACK$suffix" 2>/dev/null || true
+        $cmd -t nat -F "NAT_DNS_HIJACK$suffix" 2>/dev/null || true
+        $cmd -t nat -X "NAT_DNS_HIJACK$suffix" 2>/dev/null || true
     fi
 
     log Info "$mode_name chains for IPv${family} cleanup completed"
@@ -1430,7 +1438,7 @@ cleanup_redirect_chain4() {
 }
 
 cleanup_redirect_chain6() {
-    if [ "$HAS_NAT6" -eq 0 ] || [ "$HAS_REDIRECT6" -eq 0 ]; then
+    if ! check_kernel_feature "IP6_NF_NAT" || ! check_kernel_feature "IP6_NF_TARGET_REDIRECT"; then
         log Warn "IPv6: Kernel does not support IPv6 NAT or REDIRECT, IPv6 cleanup skipped"
         return 0
     fi
@@ -1470,8 +1478,8 @@ cleanup_ipset() {
     log Debug "[EXEC] ipset destroy cnip"
     log Debug "[EXEC] ipset destroy cnip6"
     if [ "$DRY_RUN" -eq 0 ]; then
-        ipset destroy cnip 2> /dev/null || true
-        ipset destroy cnip6 2> /dev/null || true
+        ipset destroy cnip 2>/dev/null || true
+        ipset destroy cnip6 2>/dev/null || true
         log Info "ipset 'cnip' and 'cnip6' destroyed"
     fi
 }
@@ -1505,7 +1513,7 @@ detect_proxy_mode() {
 start_proxy() {
     log Info "Starting proxy setup..."
     if [ "$BYPASS_CN_IP" -eq 1 ]; then
-        if [ "$HAS_IPSET" -eq 0 ] || [ "$HAS_XT_SET" -eq 0 ]; then
+        if ! check_kernel_feature "IP_SET" || ! check_kernel_feature "NETFILTER_XT_SET"; then
             log Error "Kernel does not support ipset (CONFIG_IP_SET, CONFIG_NETFILTER_XT_SET). Cannot bypass CN IPs"
             BYPASS_CN_IP=0
         else
@@ -1579,8 +1587,8 @@ block_loopback_traffic() {
             iptables -t filter -A OUTPUT -d 127.0.0.1 -p tcp -m owner --uid-owner "$CORE_USER" --gid-owner "$CORE_GROUP" -m tcp --dport "$PROXY_TCP_PORT" -j REJECT
             ;;
         disable)
-            ip6tables -t filter -D OUTPUT -d ::1 -p tcp -m owner --uid-owner "$CORE_USER" --gid-owner "$CORE_GROUP" -m tcp --dport "$PROXY_TCP_PORT" -j REJECT 2> /dev/null || true
-            iptables -t filter -D OUTPUT -d 127.0.0.1 -p tcp -m owner --uid-owner "$CORE_USER" --gid-owner "$CORE_GROUP" -m tcp --dport "$PROXY_TCP_PORT" -j REJECT 2> /dev/null || true
+            ip6tables -t filter -D OUTPUT -d ::1 -p tcp -m owner --uid-owner "$CORE_USER" --gid-owner "$CORE_GROUP" -m tcp --dport "$PROXY_TCP_PORT" -j REJECT 2>/dev/null || true
+            iptables -t filter -D OUTPUT -d 127.0.0.1 -p tcp -m owner --uid-owner "$CORE_USER" --gid-owner "$CORE_GROUP" -m tcp --dport "$PROXY_TCP_PORT" -j REJECT 2>/dev/null || true
             ;;
     esac
 }
@@ -1588,7 +1596,7 @@ block_loopback_traffic() {
 block_quic() {
     case "$1" in
         enable)
-            iptables -N BLOCK_QUIC 2> /dev/null || true
+            iptables -N BLOCK_QUIC 2>/dev/null || true
             iptables -F BLOCK_QUIC
             if [ "$BYPASS_CN_IP" -eq 1 ]; then
                 iptables -A BLOCK_QUIC -p udp --dport 443 -m set ! --match-set cnip dst -j REJECT
@@ -1600,7 +1608,7 @@ block_quic() {
             iptables -I OUTPUT -j BLOCK_QUIC
 
             if [ "$PROXY_IPV6" -eq 1 ]; then
-                ip6tables -N BLOCK_QUIC6 2> /dev/null || true
+                ip6tables -N BLOCK_QUIC6 2>/dev/null || true
                 ip6tables -F BLOCK_QUIC6
                 if [ "$BYPASS_CN_IP" -eq 1 ]; then
                     ip6tables -A BLOCK_QUIC6 -p udp --dport 443 -m set ! --match-set cnip6 dst -j REJECT
@@ -1616,13 +1624,13 @@ block_quic() {
         disable)
             local chain
             for chain in INPUT FORWARD OUTPUT; do
-                iptables -D "$chain" -j BLOCK_QUIC 2> /dev/null || true
-                ip6tables -D "$chain" -j BLOCK_QUIC6 2> /dev/null || true
+                iptables -D "$chain" -j BLOCK_QUIC 2>/dev/null || true
+                ip6tables -D "$chain" -j BLOCK_QUIC6 2>/dev/null || true
             done
-            iptables -F BLOCK_QUIC 2> /dev/null || true
-            iptables -X BLOCK_QUIC 2> /dev/null || true
-            ip6tables -F BLOCK_QUIC6 2> /dev/null || true
-            ip6tables -X BLOCK_QUIC6 2> /dev/null || true
+            iptables -F BLOCK_QUIC 2>/dev/null || true
+            iptables -X BLOCK_QUIC 2>/dev/null || true
+            ip6tables -F BLOCK_QUIC6 2>/dev/null || true
+            ip6tables -X BLOCK_QUIC6 2>/dev/null || true
             log Info "QUIC traffic blocking disabled"
             ;;
     esac
@@ -1725,7 +1733,7 @@ manage_ipv6() {
 }
 
 is_func() {
-    command -v "$1" > /dev/null 2>&1
+    type "$1" 2> /dev/null | grep -q 'function'
 }
 
 call_func() {
@@ -1900,7 +1908,6 @@ main() {
 
     init_tmpdir
     init_kernel_config_cache
-    init_feature_flags
 
     detect_proxy_mode
 
@@ -1935,18 +1942,6 @@ DRY_RUN=0
 VERBOSE=0
 CONFIG_DIR=""
 USE_TPROXY=0
-HAS_TPROXY=0
-HAS_CONNTRACK=0
-HAS_OWNER=0
-HAS_MARK_MT=0
-HAS_MARK_TG=0
-HAS_SOCKET=0
-HAS_ADDRTYPE=0
-HAS_MAC=0
-HAS_IPSET=0
-HAS_XT_SET=0
-HAS_NAT6=0
-HAS_REDIRECT6=0
 
 parse_args "$@"
 
